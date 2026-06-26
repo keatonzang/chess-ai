@@ -1,0 +1,22 @@
+# data & artifacts (large, regenerated locally)
+data/
+tools/
+models/
+!web/public/model/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# node / next
+node_modules/
+web/node_modules/
+web/.next/
+web/out/
+.vercel/
+
+# misc
+.DS_Store
+*.log
