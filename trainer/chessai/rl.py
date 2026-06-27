@@ -21,6 +21,11 @@ from .encoding import board_to_planes, legal_move_indices, move_to_index
 from .mcts import Node
 
 
+def cp_to_winprob(cp: float) -> float:
+    """Lichess-style centipawn -> win probability in [0, 1]."""
+    return 1.0 / (1.0 + math.exp(-0.00368208 * cp))
+
+
 class SelfPlay:
     def __init__(self, model, device="cuda:0", c_puct=1.5, sims=100,
                  dirichlet_alpha=0.3, noise_frac=0.25, max_moves=160,
@@ -132,6 +137,61 @@ class SelfPlay:
             for gi in active:
                 for _ in range(npushed[gi]):
                     boards[gi].pop()
+
+    def search_one(self, board, add_noise=True, temperature=0.0):
+        """Single-position MCTS (push/undo). Returns (chosen_move, policy_idx).
+
+        policy_idx is the MCTS visit distribution as [(move_index, prob), ...]
+        in ``board``'s own frame. Used by the bot-vs-Stockfish actor.
+        """
+        b = board.copy()
+        policy, _ = self._batch_eval([b])[0]
+        if not policy:
+            return None, []
+        root = Node(prior=0.0, to_play=b.turn)
+        for move, prob in policy.items():
+            root.children[move] = Node(prior=prob, to_play=not b.turn, move=move)
+        if add_noise:
+            self._add_noise(root)
+
+        for _ in range(self.sims):
+            node = root
+            path = [node]
+            pushed = 0
+            while node.expanded():
+                move, child = self._select_child(node)
+                b.push(move)
+                node = child
+                path.append(node)
+                pushed += 1
+            if b.is_game_over(claim_draw=False):
+                res = b.result(claim_draw=False)
+                outcome = 1.0 if res == "1-0" else -1.0 if res == "0-1" else 0.0
+                val = outcome if b.turn == chess.WHITE else -outcome
+                self._backup(path, val)
+            else:
+                pol, v = self._batch_eval([b])[0]
+                leaf = path[-1]
+                for move, prob in pol.items():
+                    leaf.children[move] = Node(prior=prob, to_play=not b.turn,
+                                               move=move)
+                self._backup(path, v)
+            for _ in range(pushed):
+                b.pop()
+
+        moves = list(root.children.keys())
+        visits = np.array([root.children[m].visits for m in moves],
+                          dtype=np.float64)
+        total = visits.sum()
+        policy_idx = [(move_to_index(m, board), v / total)
+                      for m, v in zip(moves, visits)]
+        if temperature <= 1e-6:
+            choice = moves[int(visits.argmax())]
+        else:
+            p = visits ** (1.0 / temperature)
+            p /= p.sum()
+            choice = moves[int(np.random.choice(len(moves), p=p))]
+        return choice, policy_idx
 
     def play(self, n_games=64):
         """Play n_games in parallel; return a list of (fen, policy, value) samples."""
