@@ -193,9 +193,18 @@ class SelfPlay:
             choice = moves[int(np.random.choice(len(moves), p=p))]
         return choice, policy_idx
 
-    def play(self, n_games=64):
-        """Play n_games in parallel; return a list of (fen, policy, value) samples."""
-        boards = [chess.Board() for _ in range(n_games)]
+    def play(self, n_games=64, start_fens=None):
+        """Play n_games in parallel; return a list of (fen, policy, value) samples.
+
+        start_fens: optional list (len n_games) of starting FENs; None entries
+        (or omitted) start from the standard position. Used to seed games from
+        diverse positions (puzzles/endgames/random/weird openings) so the bot
+        learns tactics and odd structures it wouldn't reach from startpos alone.
+        """
+        if start_fens is None:
+            boards = [chess.Board() for _ in range(n_games)]
+        else:
+            boards = [chess.Board(f) if f else chess.Board() for f in start_fens]
         histories = [[] for _ in range(n_games)]   # (fen, policy_idx, turn)
         results = [None] * n_games
         move_no = 0

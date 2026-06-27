@@ -9,12 +9,30 @@ import argparse
 import glob
 import json
 import os
+import random
 import time
 
 import torch
 
 from chessai.model import build_model
 from chessai.rl import SelfPlay
+from chessai import sources
+
+
+def build_position_pool(size, puzzles_path, rng):
+    """A pool of diverse starting positions: random midgames, endgames, weird
+    openings, and puzzle positions (FEN only — no solutions used)."""
+    pool = []
+    pool += list(sources.gen_random_midgame(int(size * 0.35), rng=rng))
+    pool += list(sources.gen_endgames(int(size * 0.25), rng=rng))
+    pool += list(sources.gen_openings(int(size * 0.20), weird_frac=0.6, rng=rng))
+    if puzzles_path and os.path.exists(puzzles_path):
+        with open(puzzles_path) as f:
+            puz = [l.strip() for l in f if l.strip()]
+        rng.shuffle(puz)
+        pool += puz[:int(size * 0.20)]
+    rng.shuffle(pool)
+    return pool
 
 
 def latest_ckpt_mtime(path):
@@ -47,14 +65,26 @@ def main():
     ap.add_argument("--sims", type=int, default=80)
     ap.add_argument("--max-moves", type=int, default=160)
     ap.add_argument("--temp-moves", type=int, default=24)
+    ap.add_argument("--seed-frac", type=float, default=0.4,
+                    help="fraction of games started from diverse positions")
+    ap.add_argument("--puzzles", default="../data/puzzle_fens.txt")
+    ap.add_argument("--pool-size", type=int, default=12000)
     args = ap.parse_args()
 
     os.makedirs(args.buffer, exist_ok=True)
     device = args.device if torch.cuda.is_available() else "cpu"
+    rng = random.Random(1000 + args.id)
+
+    pool = []
+    if args.seed_frac > 0:
+        pool = build_position_pool(args.pool_size, args.puzzles, rng)
+        print(f"[actor {args.id}] diverse start-position pool: {len(pool)}",
+              flush=True)
 
     model = load_model(args.ckpt, device, args.channels, args.blocks)
     ck_mtime = latest_ckpt_mtime(args.ckpt)
-    print(f"[actor {args.id}] started on {device}", flush=True)
+    print(f"[actor {args.id}] started on {device} (seed_frac={args.seed_frac})",
+          flush=True)
 
     batch = 0
     while True:
@@ -67,8 +97,12 @@ def main():
 
         sp = SelfPlay(model, device=device, sims=args.sims,
                       max_moves=args.max_moves, temp_moves=args.temp_moves)
+        start_fens = None
+        if pool:
+            start_fens = [rng.choice(pool) if rng.random() < args.seed_frac
+                          else None for _ in range(args.games)]
         t = time.time()
-        samples, results = sp.play(n_games=args.games)
+        samples, results = sp.play(n_games=args.games, start_fens=start_fens)
         dt = time.time() - t
 
         # write atomically: temp then rename
