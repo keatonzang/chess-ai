@@ -1,24 +1,25 @@
-"""Bot-vs-Stockfish actor with "surprise" reward shaping.
+"""Bot-vs-Stockfish actor with surprise-shaped rewards AND a material-handicap
+curriculum.
 
-The bot (MCTS + current net) plays games against Stockfish. For each move the
-bot makes, Stockfish evaluates the resulting position; if the game's eventual
-outcome beats Stockfish's expectation for that position, the value target is
-boosted (and dampened if the bot underperformed). This rewards unconventional
-moves that Stockfish underrates but that actually work:
+Two ideas combined:
+  * Surprise reward: for each bot move, Stockfish evaluates the resulting
+    position; the value target is boosted when the eventual outcome beats
+    Stockfish's expectation and dampened when it underperforms:
+        sf_expectation = 2 * winprob(stockfish_cp_for_bot) - 1   # [-1, 1]
+        value_target   = clip(outcome + lam*(outcome - sf_expectation), -1, 1)
+  * Curriculum: games start from a position where Stockfish is DOWN material, so
+    even a weak bot gets winnable games. As the bot scores well at a level, the
+    handicap automatically shrinks toward an even game ("harder and harder").
 
-    sf_expectation = 2 * winprob(stockfish_cp_for_bot) - 1     # in [-1, 1]
-    value_target   = clip(outcome + lam * (outcome - sf_expectation), -1, 1)
-
-Samples (bot decision positions only) are written to the shared replay buffer,
-so the learner trains on them mixed with pure self-play.
+Samples (bot decision positions only) go to the shared replay buffer.
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
-import random
 import time
 
 import chess
@@ -27,6 +28,37 @@ import torch
 
 from chessai.model import build_model
 from chessai.rl import SelfPlay, cp_to_winprob
+
+# Curriculum: pieces removed from Stockfish's side, easiest (most handicap) first.
+HANDICAP_LEVELS = [
+    ["q", "r", "b", "n"],  # ~ -20: bot should crush
+    ["q", "r"],            # ~ -14
+    ["q"],                 # -9
+    ["r"],                 # -5
+    ["b", "n"],            # -6 (two minors, different shape)
+    ["n"],                 # -3
+    ["p"],                 # -1
+    [],                    # even
+]
+
+# squares to clear for a given color (one per piece type)
+_SQ = {
+    chess.WHITE: {"q": chess.D1, "r": chess.A1, "b": chess.C1, "n": chess.B1,
+                  "p": chess.D2},
+    chess.BLACK: {"q": chess.D8, "r": chess.A8, "b": chess.C8, "n": chess.B8,
+                  "p": chess.D7},
+}
+
+
+def make_start_board(sf_color, level):
+    """Standard start position minus HANDICAP_LEVELS[level] from sf_color's side."""
+    board = chess.Board()
+    for p in HANDICAP_LEVELS[level]:
+        board.remove_piece_at(_SQ[sf_color][p])
+    # removing a rook would leave a dangling castling right -> fix it
+    board.castling_rights = board.clean_castling_rights()
+    board.clear_stack()
+    return board
 
 
 def load_model(ckpt_path, device, channels, blocks):
@@ -52,11 +84,16 @@ def main():
     ap.add_argument("--sims", type=int, default=96)
     ap.add_argument("--max-moves", type=int, default=140)
     ap.add_argument("--temp-moves", type=int, default=12)
-    ap.add_argument("--lam", type=float, default=0.5, help="surprise bonus weight")
+    ap.add_argument("--lam", type=float, default=0.5)
     ap.add_argument("--sf-skill", type=int, default=0)
     ap.add_argument("--sf-movetime", type=float, default=0.05)
     ap.add_argument("--eval-depth", type=int, default=8)
     ap.add_argument("--games-per-shard", type=int, default=6)
+    # curriculum
+    ap.add_argument("--start-level", type=int, default=0)
+    ap.add_argument("--adapt-window", type=int, default=10)
+    ap.add_argument("--up-thresh", type=float, default=0.6, help="advance (harder)")
+    ap.add_argument("--down-thresh", type=float, default=0.25, help="regress (easier)")
     args = ap.parse_args()
 
     os.makedirs(args.buffer, exist_ok=True)
@@ -73,21 +110,21 @@ def main():
     play_limit = chess.engine.Limit(time=args.sf_movetime)
     eval_limit = chess.engine.Limit(depth=args.eval_depth)
 
-    print(f"[vs_sf {args.id}] started on {device} vs SF skill {args.sf_skill}",
-          flush=True)
+    level = max(0, min(args.start_level, len(HANDICAP_LEVELS) - 1))
+    recent = collections.deque(maxlen=args.adapt_window)
+    print(f"[vs_sf {args.id}] started on {device} vs SF skill {args.sf_skill}, "
+          f"level {level} (SF down {HANDICAP_LEVELS[level]})", flush=True)
 
     shard_games = []
     shard_idx = 0
-    total_surprise = 0.0
-    n_bonus = 0
 
-    def play_game():
-        nonlocal total_surprise, n_bonus
+    def play_game(level):
         sp = SelfPlay(model, device=device, sims=args.sims,
                       max_moves=args.max_moves, temp_moves=args.temp_moves)
-        board = chess.Board()
         bot_color = chess.WHITE if (args.id + shard_idx) % 2 == 0 else chess.BLACK
-        records = []  # (fen_before, policy_idx, sf_expectation)
+        sf_color = not bot_color
+        board = make_start_board(sf_color, level)
+        records = []
         move_no = 0
         while not board.is_game_over(claim_draw=True) and move_no < args.max_moves:
             if board.turn == bot_color:
@@ -98,7 +135,6 @@ def main():
                 if mv is None:
                     break
                 board.push(mv)
-                # Stockfish eval of the resulting position, from the bot's POV
                 try:
                     info = engine.analyse(board, eval_limit)
                     score = info["score"].pov(bot_color)
@@ -123,17 +159,14 @@ def main():
 
         samples = []
         for fen, policy_idx, sf_exp in records:
-            surprise = outcome - sf_exp
-            shaped = max(-1.0, min(1.0, outcome + args.lam * surprise))
-            total_surprise += surprise
-            if surprise > 0.15:
-                n_bonus += 1
+            shaped = max(-1.0, min(1.0, outcome + args.lam * (outcome - sf_exp)))
             samples.append({
                 "fen": fen,
                 "value": round(shaped, 5),
                 "policy": [[int(i), round(float(p), 5)] for i, p in policy_idx],
             })
-        return samples, res, bot_color
+        bot_score = (outcome + 1.0) / 2.0  # 1 win / .5 draw / 0 loss
+        return samples, res, bot_color, bot_score
 
     while True:
         m = os.path.getmtime(args.ckpt) if os.path.exists(args.ckpt) else None
@@ -141,9 +174,23 @@ def main():
             model = load_model(args.ckpt, device, args.channels, args.blocks)
             ck_mtime = m
 
-        t = time.time()
-        samples, res, bot_color = play_game()
+        samples, res, bot_color, bot_score = play_game(level)
         shard_games.append(samples)
+        recent.append(bot_score)
+
+        # adapt curriculum
+        if len(recent) >= args.adapt_window:
+            avg = sum(recent) / len(recent)
+            if avg >= args.up_thresh and level < len(HANDICAP_LEVELS) - 1:
+                level += 1
+                recent.clear()
+                print(f"[vs_sf {args.id}] ADVANCE -> level {level} "
+                      f"(SF down {HANDICAP_LEVELS[level]}) avg={avg:.2f}", flush=True)
+            elif avg <= args.down_thresh and level > 0:
+                level -= 1
+                recent.clear()
+                print(f"[vs_sf {args.id}] REGRESS -> level {level} "
+                      f"(SF down {HANDICAP_LEVELS[level]}) avg={avg:.2f}", flush=True)
 
         if len(shard_games) >= args.games_per_shard:
             flat = [s for g in shard_games for s in g]
@@ -154,14 +201,11 @@ def main():
                 for s in flat:
                     f.write(json.dumps(s) + "\n")
             os.rename(tmp, final)
-            avg_surp = total_surprise / max(1, sum(len(g) for g in shard_games))
-            print(f"[vs_sf {args.id}] wrote {len(flat)} samples "
-                  f"({len(shard_games)} games) last={res} as "
-                  f"{'W' if bot_color==chess.WHITE else 'B'} "
-                  f"avg_surprise={avg_surp:+.3f} bonus_moves={n_bonus}", flush=True)
+            score = sum(recent) / len(recent) if recent else 0.0
+            print(f"[vs_sf {args.id}] wrote {len(flat)} samples, "
+                  f"level {level} (SF down {HANDICAP_LEVELS[level] or 'nothing'}), "
+                  f"recent_score={score:.2f}", flush=True)
             shard_games = []
-            total_surprise = 0.0
-            n_bonus = 0
             shard_idx += 1
 
 
