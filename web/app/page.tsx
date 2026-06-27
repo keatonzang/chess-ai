@@ -8,9 +8,15 @@ export default function Home() {
           Chess<span className="accent">RL</span>
         </h1>
         <p className="tag">
-          A neural net that learned chess by distilling Stockfish across puzzles,
-          weird openings, endgames &amp; rare positions — then sharpened with
-          self-play. It thinks in your browser with MCTS search.
+          A neural net learning chess <strong>purely by trial and error</strong> —
+          self-play reinforcement learning from random weights, no human games and
+          no engine evaluations as training signal. It thinks in your browser with
+          MCTS search.
+        </p>
+        <p className="note">
+          ⚠️ Early-stage agent: it&apos;s actively training and still a beginner —
+          it will hang pieces and miss wins. That&apos;s the real, unpolished RL
+          model, warts and all. It gets stronger with every training session.
         </p>
       </header>
       <ChessGame />
