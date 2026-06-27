@@ -19,7 +19,7 @@ import chess
 import torch
 
 from chessai.model import build_model
-from chessai.rl import SelfPlay
+from chessai.rl import SelfPlay, outcome_white
 from chessai import sources
 
 
@@ -109,9 +109,8 @@ def main():
                 board.push(mv)
             move_no += 1
 
-        res = board.result(claim_draw=True)
-        win = 1.0 if res == "1-0" else -1.0 if res == "0-1" else 0.0
-        outcome = win if cur_color == chess.WHITE else -win
+        ov = outcome_white(board)  # material-adjudicated if unfinished
+        outcome = ov if cur_color == chess.WHITE else -ov
         samples = [{
             "fen": fen,
             "value": round(outcome, 5),

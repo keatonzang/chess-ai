@@ -120,6 +120,47 @@ def gen_endgames(n: int, max_extra: int = 5, rng: random.Random | None = None,
             yield board.fen()
 
 
+# forced-win material for one side (vs a lone king) — teaches checkmate technique
+_WIN_SETS = [
+    [chess.QUEEN], [chess.ROOK, chess.ROOK], [chess.QUEEN, chess.ROOK],
+    [chess.ROOK], [chess.QUEEN, chess.QUEEN],
+    [chess.BISHOP, chess.BISHOP, chess.KNIGHT],
+]
+
+
+def gen_winning_endgames(n: int, rng: random.Random | None = None,
+                         max_tries: int = 80) -> Iterator[str]:
+    """Random legal 'K + winning material vs lone K' positions, so the bot gets
+    dense decisive signal and learns to deliver checkmate (pure RL — these are
+    just start positions, no solutions provided)."""
+    rng = rng or random.Random()
+    produced = 0
+    attempts = 0
+    while produced < n and attempts < n * max_tries:
+        attempts += 1
+        strong = rng.choice([chess.WHITE, chess.BLACK])
+        board = chess.Board.empty()
+        squares = rng.sample(chess.SQUARES, 64)
+        sk, wk = squares[0], squares[1]
+        if chess.square_distance(sk, wk) <= 1:
+            continue
+        board.set_piece_at(sk, chess.Piece(chess.KING, strong))
+        board.set_piece_at(wk, chess.Piece(chess.KING, not strong))
+        si = 2
+        for pt in rng.choice(_WIN_SETS):
+            if si >= len(squares):
+                break
+            sq = squares[si]; si += 1
+            if pt == chess.PAWN and chess.square_rank(sq) in (0, 7):
+                continue
+            board.set_piece_at(sq, chess.Piece(pt, strong))
+        board.turn = rng.choice([chess.WHITE, chess.BLACK])
+        board.clear_stack()
+        if board.is_valid() and not board.is_game_over():
+            produced += 1
+            yield board.fen()
+
+
 def gen_puzzles(path: str, n: int, rng: random.Random | None = None) -> Iterator[str]:
     """Sample puzzle positions from the Lichess puzzle CSV.
 

@@ -26,6 +26,35 @@ def cp_to_winprob(cp: float) -> float:
     return 1.0 / (1.0 + math.exp(-0.00368208 * cp))
 
 
+_PIECE_VAL = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
+              chess.ROOK: 5, chess.QUEEN: 9}
+
+
+def material_diff(board: chess.Board) -> float:
+    """White material minus Black material (pawns=1 ... queen=9)."""
+    d = 0
+    for pt, val in _PIECE_VAL.items():
+        d += val * (len(board.pieces(pt, chess.WHITE))
+                    - len(board.pieces(pt, chess.BLACK)))
+    return float(d)
+
+
+def outcome_white(board: chess.Board) -> float:
+    """Game value from White's perspective in [-1, 1].
+
+    Decisive/natural results give +/-1 or 0. Games that merely hit the move cap
+    (unfinished) are adjudicated by material so the side that's ahead still gets
+    a partial reward — this densifies the otherwise-sparse win/loss signal that
+    stalls small-scale self-play (a bot up material but unable to mate would
+    otherwise learn nothing).
+    """
+    if board.is_game_over(claim_draw=True):
+        r = board.result(claim_draw=True)
+        return 1.0 if r == "1-0" else -1.0 if r == "0-1" else 0.0
+    md = material_diff(board)
+    return max(-0.85, min(0.85, md / 15.0))
+
+
 class SelfPlay:
     def __init__(self, model, device="cuda:0", c_puct=1.5, sims=100,
                  dirichlet_alpha=0.3, noise_frac=0.25, max_moves=160,
@@ -259,10 +288,9 @@ class SelfPlay:
 
         samples = []
         for gi in range(n_games):
-            res = results[gi]
-            outcome = 1.0 if res == "1-0" else -1.0 if res == "0-1" else 0.0
+            ov = outcome_white(boards[gi])  # material-adjudicated if unfinished
             for fen, policy_idx, turn in histories[gi]:
-                v = outcome if turn == chess.WHITE else -outcome
+                v = ov if turn == chess.WHITE else -ov
                 samples.append({
                     "fen": fen,
                     "value": round(v, 5),

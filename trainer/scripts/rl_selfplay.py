@@ -23,14 +23,15 @@ def build_position_pool(size, puzzles_path, rng):
     """A pool of diverse starting positions: random midgames, endgames, weird
     openings, and puzzle positions (FEN only — no solutions used)."""
     pool = []
-    pool += list(sources.gen_random_midgame(int(size * 0.35), rng=rng))
-    pool += list(sources.gen_endgames(int(size * 0.25), rng=rng))
+    pool += list(sources.gen_random_midgame(int(size * 0.30), rng=rng))
+    pool += list(sources.gen_endgames(int(size * 0.20), rng=rng))
+    pool += list(sources.gen_winning_endgames(int(size * 0.15), rng=rng))
     pool += list(sources.gen_openings(int(size * 0.20), weird_frac=0.6, rng=rng))
     if puzzles_path and os.path.exists(puzzles_path):
         with open(puzzles_path) as f:
             puz = [l.strip() for l in f if l.strip()]
         rng.shuffle(puz)
-        pool += puz[:int(size * 0.20)]
+        pool += puz[:int(size * 0.15)]
     rng.shuffle(pool)
     return pool
 

@@ -29,7 +29,7 @@ import chess.engine
 import torch
 
 from chessai.model import build_model
-from chessai.rl import SelfPlay, cp_to_winprob
+from chessai.rl import SelfPlay, cp_to_winprob, outcome_white
 
 HANDICAP_LEVELS = [
     ["q", "r", "b", "n"], ["q", "r"], ["q"], ["r"],
@@ -162,8 +162,8 @@ def main():
             move_no += 1
 
         res = board.result(claim_draw=True)
-        win = 1.0 if res == "1-0" else -1.0 if res == "0-1" else 0.0
-        outcome = win if bot_color == chess.WHITE else -win
+        ov = outcome_white(board)  # material-adjudicated if unfinished
+        outcome = ov if bot_color == chess.WHITE else -ov
 
         samples = []
         for fen, policy_idx, sf_exp, novel in records:
