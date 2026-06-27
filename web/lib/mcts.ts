@@ -7,6 +7,47 @@ export type Evaluator = (
   planes: Float32Array
 ) => Promise<{ logits: Float32Array; value: number }>;
 
+export interface Analysis {
+  value: number; // [-1,1] from side-to-move POV
+  whiteValue: number; // [-1,1] from White's POV (for the eval bar)
+  winPct: number; // side-to-move win probability 0..100
+  turn: "w" | "b";
+  moves: { uci: string; san: string; prob: number }[]; // top policy moves
+}
+
+/** One network forward pass: the bot's own evaluation of a position. */
+export async function analyzePosition(
+  evaluator: Evaluator,
+  fen: string,
+  topN = 4
+): Promise<Analysis> {
+  const game = new Chess(fen);
+  const { logits, value } = await evaluator(boardToPlanes(fen));
+  const turn = game.turn() as "w" | "b";
+  const legal = game.moves({ verbose: true }) as any[];
+  let moves: Analysis["moves"] = [];
+  if (legal.length) {
+    const idxs = legal.map((m) =>
+      moveToIndex(m.from, m.to, m.promotion ?? null, turn)
+    );
+    let max = -Infinity;
+    for (const i of idxs) if (logits[i] > max) max = logits[i];
+    let sum = 0;
+    const exps = idxs.map((i) => {
+      const e = Math.exp(logits[i] - max);
+      sum += e;
+      return e;
+    });
+    moves = legal
+      .map((m, k) => ({ uci: m.from + m.to + (m.promotion ?? ""), san: m.san, prob: exps[k] / sum }))
+      .sort((a, b) => b.prob - a.prob)
+      .slice(0, topN);
+  }
+  const whiteValue = turn === "w" ? value : -value;
+  const winPct = Math.round((value + 1) * 50);
+  return { value, whiteValue, winPct, turn, moves };
+}
+
 class Node {
   prior: number;
   visits = 0;

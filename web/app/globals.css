@@ -52,7 +52,56 @@ html, body {
   .game { grid-template-columns: 1fr; }
 }
 
-.board { width: 100%; }
+.boardwrap { display: flex; gap: 10px; align-items: stretch; }
+.board { width: 100%; flex: 1; }
+
+.evalbar {
+  position: relative;
+  width: 26px;
+  border-radius: 6px;
+  background: #1a1206;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.evalfill {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(180deg, #eef3f8, #cdd8e3);
+  transition: height 0.4s ease;
+}
+.evalnum {
+  position: absolute;
+  bottom: 4px; left: 0; right: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1a2940;
+  mix-blend-mode: difference;
+  filter: invert(1);
+}
+
+.topmoves { display: flex; flex-direction: column; gap: 6px; }
+.tm { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.tmsan {
+  min-width: 52px;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+}
+.tmbar {
+  flex: 1;
+  height: 8px;
+  background: var(--panel2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.tmfill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
+  border-radius: 4px;
+}
+.tmpct { min-width: 34px; text-align: right; color: var(--muted); }
 
 .panel {
   background: var(--panel);

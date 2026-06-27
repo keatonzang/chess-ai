@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Chess, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { getEngine, Engine } from "../lib/engine";
-import { MCTS } from "../lib/mcts";
+import { MCTS, analyzePosition, Analysis } from "../lib/mcts";
 
 type Status = "loading" | "ready" | "thinking" | "gameover" | "error";
 
@@ -29,6 +29,8 @@ export default function ChessGame() {
   const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
   const [thinkMs, setThinkMs] = useState<number | null>(null);
   const [history, setHistory] = useState<string[]>([]);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [showEval, setShowEval] = useState(true);
 
   // ---- engine setup (loads ONNX on the client) ----
   useEffect(() => {
@@ -122,6 +124,21 @@ export default function ChessGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fen, status, playerColor]);
 
+  // live analysis (the bot's own evaluation of the current position)
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng || !showEval) return;
+    let cancelled = false;
+    analyzePosition(eng.evaluator, fen)
+      .then((a) => {
+        if (!cancelled) setAnalysis(a);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [fen, backend, showEval]);
+
   const onDrop = useCallback(
     (source: Square, target: Square): boolean => {
       const g = gameRef.current;
@@ -185,7 +202,24 @@ export default function ChessGame() {
 
   return (
     <div className="game">
-      <div className="board">
+      <div className="boardwrap">
+        {showEval && (
+          <div className="evalbar" title="Bot's evaluation (White's perspective)">
+            <div
+              className="evalfill"
+              style={{
+                height: `${analysis ? (analysis.whiteValue + 1) * 50 : 50}%`,
+              }}
+            />
+            <span className="evalnum">
+              {analysis
+                ? (analysis.whiteValue >= 0 ? "+" : "") +
+                  analysis.whiteValue.toFixed(2)
+                : "—"}
+            </span>
+          </div>
+        )}
+        <div className="board">
         <Chessboard
           position={fen}
           onPieceDrop={onDrop}
@@ -196,6 +230,7 @@ export default function ChessGame() {
           customLightSquareStyle={{ backgroundColor: "#d6e0ea" }}
           arePiecesDraggable={status === "ready" || status === "thinking"}
         />
+        </div>
       </div>
 
       <aside className="panel">
@@ -219,6 +254,42 @@ export default function ChessGame() {
             ))}
           </div>
           <small>{LEVELS[level].sims} MCTS simulations / move</small>
+        </div>
+
+        {showEval && analysis && (
+          <div className="control">
+            <label>
+              Bot's view —{" "}
+              {analysis.turn === playerColor ? "your" : "bot's"} side to move,{" "}
+              {analysis.winPct}% win
+            </label>
+            <div className="topmoves">
+              {analysis.moves.map((m) => (
+                <div key={m.uci} className="tm">
+                  <span className="tmsan">{m.san}</span>
+                  <span className="tmbar">
+                    <span
+                      className="tmfill"
+                      style={{ width: `${Math.round(m.prob * 100)}%` }}
+                    />
+                  </span>
+                  <span className="tmpct">{Math.round(m.prob * 100)}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="control">
+          <label>
+            <input
+              type="checkbox"
+              checked={showEval}
+              onChange={(e) => setShowEval(e.target.checked)}
+              style={{ marginRight: 6 }}
+            />
+            Show bot evaluation
+          </label>
         </div>
 
         <div className="control">
