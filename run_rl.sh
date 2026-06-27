@@ -14,7 +14,8 @@ N_LEAGUE=${N_LEAGUE:-2}       # league actors (current net vs past snapshots)
 GAMES=${GAMES:-24}
 SIMS=${SIMS:-64}
 MAXMOVES=${MAXMOVES:-120}
-LAM=${LAM:-0.5}
+LAM=${LAM:-1.0}
+NOV_BONUS=${NOV_BONUS:-0.0}
 SF_SKILL_SET=${SF_SKILL_SET:-0,1,3,5}
 RESUME=${RESUME:-}            # set to ../models/rl_current.pt to continue training
 
@@ -44,7 +45,8 @@ for j in $(seq 0 $((N_SF-1))); do
   nohup python -m scripts.rl_vs_sf --id "$j" --device cuda:1 \
     --ckpt ../models/rl_current.pt --buffer ../data/rl_buffer \
     --sf ../tools/stockfish/stockfish-ubuntu-x86-64-avx2 \
-    --sims "$SIMS" --lam "$LAM" --sf-skill-set "$SF_SKILL_SET" --start-level 0 \
+    --sims "$SIMS" --lam "$LAM" --nov-bonus "$NOV_BONUS" \
+    --sf-skill-set "$SF_SKILL_SET" --start-level 0 \
     > "$ROOT/data/rl_vssf_$j.log" 2>&1 &
   echo $! >> "$PIDFILE"
   echo "[run_rl] vs-Stockfish actor $j on cuda:1 (lam=$LAM, skills=$SF_SKILL_SET)"

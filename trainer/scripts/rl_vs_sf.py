@@ -79,8 +79,8 @@ def main():
     ap.add_argument("--sims", type=int, default=96)
     ap.add_argument("--max-moves", type=int, default=140)
     ap.add_argument("--temp-moves", type=int, default=12)
-    ap.add_argument("--lam", type=float, default=0.5)
-    ap.add_argument("--nov-bonus", type=float, default=0.15)
+    ap.add_argument("--lam", type=float, default=1.0)
+    ap.add_argument("--nov-bonus", type=float, default=0.0)
     ap.add_argument("--novelty-k", type=int, default=3)
     ap.add_argument("--sf-skill-set", default="0,1,3,5")
     ap.add_argument("--sf-movetime", type=float, default=0.05)
@@ -131,7 +131,8 @@ def main():
                 fen_before = board.fen()
                 sf_best, topk, sf_exp = None, set(), 0.0
                 try:
-                    infos = engine.analyse(board, eval_limit, multipv=args.novelty_k)
+                    mpv = args.novelty_k if args.nov_bonus > 0 else 1
+                    infos = engine.analyse(board, eval_limit, multipv=mpv)
                     if isinstance(infos, dict):
                         infos = [infos]
                     sc = infos[0]["score"].pov(bot_color)
