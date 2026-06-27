@@ -6,7 +6,7 @@ weird/offbeat openings, endgames, random midgames and rare-but-legal positions �
 and is then sharpened with AlphaZero-style self-play. At play time it runs an
 MCTS search guided by the network, **entirely client-side** (WebGPU → WASM).
 
-> 🎮 **Live demo:** _(deployed on Vercel — link added after first deploy)_
+> 🎮 **Live demo:** <https://chess-rl-keaton.vercel.app>
 
 ## How it works
 
